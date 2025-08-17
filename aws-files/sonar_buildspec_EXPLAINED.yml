@@ -1,0 +1,38 @@
+version: 0.2                                    # AWS CodeBuild buildspec version 0.2
+
+env:                                           # Environment variables section
+  parameter-store:                             # Variables retrieved from AWS Systems Manager Parameter Store
+    LOGIN: LOGIN                               # SonarQube login token stored in parameter store
+    HOST: HOST                                 # SonarQube host URL stored in parameter store
+    Organization: Organization                 # SonarQube organization name stored in parameter store
+    Project: Project                          # SonarQube project key stored in parameter store
+    #CODEARTIFACT_AUTH_TOKEN: CODEARTIFACT_AUTH_TOKEN  # Commented out - token generated dynamically instead
+
+phases:                                        # Build phases definition
+  install:                                     # Install phase - runtime setup
+    runtime-versions:                          # Specify runtime versions to install
+      java: corretto17                        # Use Amazon Corretto 17 Java runtime (updated from 11)
+    commands:                                  # Commands executed in install phase
+    - cp ./settings.xml /root/.m2/settings.xml  # Copy Maven settings file to default Maven directory
+    - export CODEARTIFACT_AUTH_TOKEN=`aws codeartifact get-authorization-token --domain ArtifactDomain --domain-owner ID --region REGION --query authorizationToken --output text`  # Generate CodeArtifact authentication token for Maven dependencies
+
+  pre_build:                                   # Pre-build phase - install tools and dependencies
+    commands:                                  # Commands executed before main build
+      - apt-get update                         # Update Ubuntu package repository lists
+      - apt-get install -y jq checkstyle      # Install jq (JSON processor) and checkstyle tool
+      - wget https://dlcdn.apache.org/maven/maven-3/3.9.4/binaries/apache-maven-3.9.4-bin.tar.gz  # Download Maven 3.9.4 binary
+      - tar xzvf apache-maven-3.9.4-bin.tar.gz  # Extract Maven archive (x=extract, z=gunzip, v=verbose, f=file)
+      - ln -s apache-maven-3.9.4 maven        # Create symbolic link 'maven' pointing to extracted directory
+      - wget https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-3.3.0.1492-linux.zip  # Download SonarQube scanner CLI
+      - unzip ./sonar-scanner-cli-3.3.0.1492-linux.zip  # Extract SonarQube scanner archive
+      - export PATH=$PATH:/sonar-scanner-3.3.0.1492-linux/bin/  # Add SonarQube scanner to system PATH
+
+  build:                                       # Build phase - main build and analysis
+    commands:                                  # Commands executed in build phase
+      - mvn test                              # Run Maven unit tests
+      - mvn checkstyle:checkstyle             # Run checkstyle static code analysis
+      - mvn sonar:sonar -Dsonar.login=$LOGIN -Dsonar.host.url=$HOST -Dsonar.projectKey=$Project -Dsonar.organization=$Organization -Dsonar.java.binaries=target/test-classes/com/visualpathit/account/controllerTest/ -Dsonar.junit.reportsPath=target/surefire-reports/ -Dsonar.jacoco.reportsPath=target/jacoco.exec -Dsonar.java.checkstyle.reportPaths=target/checkstyle-result.xml  # Run SonarQube analysis with comprehensive parameters
+      - sleep 5                               # Wait 5 seconds for SonarQube to process analysis
+      - curl https://sonarcloud.io/api/qualitygates/project_status?projectKey=$Project >result.json  # Fetch quality gate status from SonarCloud API and save to file
+      - cat result.json                       # Display quality gate result in build logs
+      - if [ $(jq -r '.projectStatus.status' result.json) = ERROR ] ; then $CODEBUILD_BUILD_SUCCEEDING -eq 0 ;fi  # Parse JSON result and fail build if quality gate status is ERROR
