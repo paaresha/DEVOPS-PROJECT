@@ -9,7 +9,7 @@ version: 0.2
      # key: "value"
 
 phases:
-  install:
+  install:l
    runtime-versions:
       java: corretto17
   pre_build:

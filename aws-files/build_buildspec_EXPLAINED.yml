@@ -1,0 +1,30 @@
+version: 0.2 # Buildspec version
+
+#env: # Environment variables (commented)
+  #parameter-store: # AWS Parameter Store variables (commented)
+    #CODEARTIFACT_AUTH_TOKEN: CODEARTIFACT_AUTH_TOKEN # Token reference (commented)
+
+phases:
+  install:
+    runtime-versions:
+      java: corretto17 # Set Java runtime to Amazon Corretto 17
+    commands:
+      - cp ./settings.xml /root/.m2/settings.xml # Copy Maven settings to user folder
+      - export CODEARTIFACT_AUTH_TOKEN=`aws codeartifact get-authorization-token --domain ArtifactDomain --domain-owner ID --region REGION --query authorizationToken --output text` # Get CodeArtifact auth token
+  
+  pre_build:
+    commands:
+      - apt-get update # Update package list
+      - apt-get install -y jq # Install jq JSON processor
+      - wget https://dlcdn.apache.org/maven/maven-3/3.9.4/binaries/apache-maven-3.9.4-bin.tar.gz # Download Maven 3.9.4
+      - tar xzvf apache-maven-3.9.4-bin.tar.gz # Extract Maven archive
+      - ln -s apache-maven-3.9.4 maven # Create Maven symlink
+  build:
+    commands:
+      - mvn clean install -DskipTests # Maven build without tests
+artifacts:
+  files:
+     - target/**/*.war # Collect all WAR files from target
+  discard-paths: yes # Remove directory paths from artifacts
+
+
