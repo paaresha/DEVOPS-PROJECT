@@ -1,30 +1,44 @@
-version: 0.2
-env: 
-  parameter-store:
-    dbhost: RDS-Endpoint
-    dbuser: RDSUSER
-    dbpass: RDSPASS
-phases:
-  install:
+version: 0.2  # CodeBuild buildspec version 2.0
+
+env:  # Environment variables section
+  parameter-store:  # Pull sensitive values from AWS Systems Manager Parameter Store
+    dbhost: RDS-Endpoint    # Database hostname from parameter store
+    dbuser: RDSUSER         # Database username from parameter store  
+    dbpass: RDSPASS         # Database password from parameter store
+
+phases:  # Build phases definition
+
+  install:  # Install phase - set up runtime and dependencies
     runtime-versions:
-      java: corretto17
+      java: corretto17  # Install Amazon Corretto 17 (OpenJDK distribution)
     commands:
+      # Copy Maven settings file to user's Maven directory for configuration
       - cp ./settings.xml /root/.m2/settings.xml
+      # Get CodeArtifact authorization token for accessing private Maven repository
       - export CODEARTIFACT_AUTH_TOKEN=`aws codeartifact get-authorization-token --domain ArtifactDomain --domain-owner ID --region REGION --query authorizationToken --output text`
-  pre_build:
+
+  pre_build:  # Pre-build phase - prepare source code and environment
     commands:
+      # Replace hardcoded database password in application.properties with environment variable
       - sed -i "s/jdbc.password=admin123/jdbc.password=$dbpass/" src/main/resources/application.properties
+      # Replace hardcoded database username in application.properties with environment variable
       - sed -i "s/jdbc.username=admin/jdbc.username=$dbuser/" src/main/resources/application.properties
+      # Replace hardcoded database host (db01:3306) with actual RDS endpoint
       - sed -i "s/db01:3306/$dbhost:3306/" src/main/resources/application.properties
+      # Update package manager repositories
       - apt-get update
+      # Install jq (JSON processor utility)
       - apt-get install -y jq 
+      # Download Apache Maven 3.9.4 binary distribution
       - wget https://dlcdn.apache.org/maven/maven-3/3.9.4/binaries/apache-maven-3.9.4-bin.tar.gz
+      # Extract the Maven tar.gz file
       - tar xzvf apache-maven-3.9.4-bin.tar.gz
+      # Create symbolic link for easier Maven access
       - ln -s apache-maven-3.9.4 maven
-  build:
+
+  build:  # Build phase - compile and package the application
     commands:
+      # Run Maven clean install, skip tests for faster build
       - mvn clean install -DskipTests
-artifacts:
-  files:
-     - '**/*'
-  base-directory: 'target/vprofile-v2'
+
+artifacts:  # Define what files to output
