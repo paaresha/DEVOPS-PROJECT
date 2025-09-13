@@ -1,5 +1,5 @@
 variables:
-  DOCKER_REGISTRY: $CI_REGISTRY              # Use GitLab's container registry
+  DOCKER_REGISTRY: $CI_REGISTRY              # Use GitLab's container registry 
   IMAGE_NAME: $CI_REGISTRY_IMAGE             # Full image path with registry
   MAVEN_OPTS: "-Dmaven.repo.local=.m2/repository" # Local Maven repository path
 
