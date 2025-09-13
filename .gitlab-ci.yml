@@ -1,43 +1,43 @@
 variables:
-  DOCKER_REGISTRY: $CI_REGISTRY
-  IMAGE_NAME: $CI_REGISTRY_IMAGE
-  MAVEN_OPTS: "-Dmaven.repo.local=.m2/repository"
+  DOCKER_REGISTRY: $CI_REGISTRY              # Use GitLab's container registry
+  IMAGE_NAME: $CI_REGISTRY_IMAGE             # Full image path with registry
+  MAVEN_OPTS: "-Dmaven.repo.local=.m2/repository" # Local Maven repository path
 
-stages:
-  - build
-  - unit-test
-  - checkstyle
-  - sonar-analysis
-  - quality-gate
-  - docker-build
-  - update-deployment
+stages:                                      # Pipeline execution order
+  - build                                    # Compile and package application
+  - unit-test                                # Run unit tests
+  - checkstyle                               # Code style validation
+  - sonar-analysis                           # Static code analysis
+  - quality-gate                             # SonarQube quality gate check
+  - docker-build                             # Build and push Docker image
+  - update-deployment                        # Update Helm chart with new image
 
-cache:
+cache:                                       # Cache Maven dependencies
   paths:
     - .m2/repository/
 
 build:
   stage: build
-  image: maven:3.9-eclipse-temurin-21
+  image: maven:3.9-eclipse-temurin-21        # Java 21 with Maven 3.9
   script:
-    - export MAVEN_OPTS="-Xmx512m -Xms256m"
-    - mvn clean install -DskipTests
+    - export MAVEN_OPTS="-Xmx512m -Xms256m"  # JVM memory settings
+    - mvn clean install -DskipTests           # Build without running tests
   artifacts:
     paths:
-      - target/
+      - target/                              # Save compiled artifacts
   rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" # Run on MRs
+    - if: $CI_COMMIT_BRANCH == "main"        # Run on main branch
 
 unit-test:
   stage: unit-test
   image: maven:3.9-eclipse-temurin-21
   script:
     - export MAVEN_OPTS="-Xmx512m -Xms256m"
-    - mvn test
+    - mvn test                               # Execute unit tests
   artifacts:
     reports:
-      junit: target/surefire-reports/TEST-*.xml
+      junit: target/surefire-reports/TEST-*.xml # JUnit test reports
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH == "main"
@@ -47,65 +47,65 @@ checkstyle:
   image: maven:3.9-eclipse-temurin-21
   script:
     - export MAVEN_OPTS="-Xmx512m -Xms256m"
-    - mvn checkstyle:checkstyle
+    - mvn checkstyle:checkstyle              # Run code style checks
   artifacts:
     paths:
-      - target/checkstyle-result.xml
+      - target/checkstyle-result.xml         # Save checkstyle report
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH == "main"
 
 sonar-analysis:
   stage: sonar-analysis
-  image: sonarsource/sonar-scanner-cli:latest
+  image: sonarsource/sonar-scanner-cli:latest # Official SonarQube scanner
   script:
     - |
-      sonar-scanner -Dsonar.login=$LOGIN \
-        -Dsonar.host.url=$HOST \
-        -Dsonar.projectKey=$Project \
-        -Dsonar.organization=$Organization \
-        -Dsonar.projectName=vprofile-repo \
-        -Dsonar.projectVersion=1.0 \
-        -Dsonar.sources=src/ \
-        -Dsonar.java.binaries=target/classes/com/visualpathit/account/controller/ \
-        -Dsonar.junit.reportsPath=target/surefire-reports/ \
-        -Dsonar.jacoco.reportsPath=target/jacoco.exec \
-        -Dsonar.java.checkstyle.reportPaths=target/checkstyle-result.xml
+      sonar-scanner -Dsonar.login=$LOGIN \   # SonarQube authentication
+        -Dsonar.host.url=$HOST \             # SonarQube server URL
+        -Dsonar.projectKey=$Project \        # Unique project identifier
+        -Dsonar.organization=$Organization \ # SonarCloud organization
+        -Dsonar.projectName=vprofile-repo \  # Display name
+        -Dsonar.projectVersion=1.0 \         # Project version
+        -Dsonar.sources=src/ \               # Source code location
+        -Dsonar.java.binaries=target/classes/com/visualpathit/account/controller/ \ # Compiled classes
+        -Dsonar.junit.reportsPath=target/surefire-reports/ \ # Test reports
+        -Dsonar.jacoco.reportsPath=target/jacoco.exec \ # Code coverage data
+        -Dsonar.java.checkstyle.reportPaths=target/checkstyle-result.xml # Style violations
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH == "main"
 
 quality-gate:
   stage: quality-gate
-  image: curlimages/curl:latest
+  image: curlimages/curl:latest              # Lightweight image with curl
   script:
-    - |
+    - #|  Uncomment this line if you want to run this code
       echo "Checking Quality Gate status..."
       i=0
-      while [ $i -lt 30 ]; do
-        RESPONSE=$(curl -s -u $LOGIN: "$HOST/api/qualitygates/project_status?projectKey=$Project")
+      while [ $i -lt 30 ]; do               # 30 iteration limit (5 minutes)
+        RESPONSE=$(curl -s -u $LOGIN: "$HOST/api/qualitygates/project_status?projectKey=$Project") # Query SonarQube API
         echo "API Response: $RESPONSE"
-        STATUS=$(echo "$RESPONSE" | grep -o '"status":"[^"]*' | head -1 | cut -d'"' -f4)
+        STATUS=$(echo "$RESPONSE" | grep -o '"status":"[^"]*' | head -1 | cut -d'"' -f4) # Extract status
         echo "Extracted Status: [$STATUS]"
         echo "Status length: ${#STATUS}"
         case "$STATUS" in
           "OK")
-            echo "Quality Gate PASSED"
+            echo "Quality Gate PASSED"       # Analysis passed all conditions
             exit 0
             ;;
           "ERROR")
-            echo "Quality Gate FAILED"
+            echo "Quality Gate FAILED"       # Analysis failed quality conditions
             exit 1
             ;;
           *)
-            echo "Status not recognized or still processing: [$STATUS]"
+            echo "Status not recognized or still processing: [$STATUS]" # Unknown/pending status
             ;;
         esac
         echo "Waiting for analysis to complete..."
-        sleep 10
+        sleep 10                             # Wait 10 seconds between checks
         i=$((i + 1))
       done
-      echo "Quality Gate check timed out"
+      echo "Quality Gate check timed out"    # Exceeded retry limit
       exit 1
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
@@ -113,9 +113,9 @@ quality-gate:
 
 docker-build-push:
   stage: docker-build
-  image: docker:latest
+  image: docker:latest                       # Docker CLI image
   services:
-    - docker:dind
+    - docker:dind                            # Docker-in-Docker service
   script:
     - echo "=== DEBUG VARIABLES ==="
     - echo "CI_REGISTRY=$CI_REGISTRY"
@@ -124,10 +124,10 @@ docker-build-push:
     - echo "CI_COMMIT_SHA=$CI_COMMIT_SHA"
     - echo "CI_REGISTRY_USER=$CI_REGISTRY_USER"
     - echo "========================"
-    - docker build -t $IMAGE_NAME:$CI_COMMIT_SHA -f Docker-files/app/multistage/Dockerfile .
-    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
-    - docker push $IMAGE_NAME:$CI_COMMIT_SHA
-    - docker rmi $IMAGE_NAME:$CI_COMMIT_SHA || true
+    - docker build -t $IMAGE_NAME:$CI_COMMIT_SHA -f Docker-files/app/multistage/Dockerfile . # Build with commit SHA tag
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY # Login to GitLab registry
+    - docker push $IMAGE_NAME:$CI_COMMIT_SHA # Push tagged image
+    - docker rmi $IMAGE_NAME:$CI_COMMIT_SHA || true # Cleanup local image
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH == "main"
@@ -136,21 +136,21 @@ update-deployment:
   stage: update-deployment
   image: alpine:latest
   variables:
-    GIT_STRATEGY: none
+    GIT_STRATEGY: none                       # Don't clone current repo
   script:
-    - set -e
-    - apk add --no-cache git
+    - set -e                                 # Exit on any error
+    - apk add --no-cache git                 # Install git client
     - echo "=== DEBUG VARIABLES ==="
-    - echo "CHARTS_REPO_URL=$CHARTS_REPO_URL"
+    - echo "CHARTS_REPO_URL=>$CHARTS_REPO_URL"
     - echo "IMAGE_NAME=$IMAGE_NAME"
     - echo "CI_COMMIT_SHA=$CI_COMMIT_SHA"
     - echo "========================"
-    - git config --global user.email "gitlab-ci@example.com"
+    - git config --global user.email "gitlab-ci@example.com" # Set git user
     - git config --global user.name "GitLab CI"
-    - git clone https://oauth2:${CHARTS_REPO_TOKEN}@${CHARTS_REPO_URL} charts-repo
+    - git clone https://oauth2:${CHARTS_REPO_TOKEN}@${CHARTS_REPO_URL} charts-repo # Clone Helm charts repo
     - cd charts-repo
-    - 'sed -i "/^app:/,/^[a-z]/ s|image:.*|image: ${IMAGE_NAME}|" vprofile-charts/values.yaml'
-    - 'sed -i "/^app:/,/^[a-z]/ s|tag:.*|tag: ${CI_COMMIT_SHA}|" vprofile-charts/values.yaml'
+    - 'sed -i "/^app:/,/^[a-z]/ s|image:.*|image: ${IMAGE_NAME}|" vprofile-charts/values.yaml' # Update image name
+    - 'sed -i "/^app:/,/^[a-z]/ s|tag
     - git add vprofile-charts/values.yaml
     - git commit -m "Update image to ${CI_COMMIT_SHA}" || echo "No changes to commit"
     - git push origin main
