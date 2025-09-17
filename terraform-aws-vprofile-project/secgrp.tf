@@ -31,6 +31,12 @@ resource "aws_vpc_security_group_egress_rule" "allowAllOutbound_ipv6forELB" {
   ip_protocol       = "-1" # semantically equivalent to all ports
 }
 
+
+
+
+
+
+
 resource "aws_security_group" "vprofile-bastion-sg" {
   name        = "vprofile-bastion-sg"
   description = "Security group for bastionisioner ec2 instance"
@@ -62,6 +68,9 @@ resource "aws_vpc_security_group_egress_rule" "allowAllOutbound_ipv6forBastion" 
   cidr_ipv6         = "::/0"
   ip_protocol       = "-1" # semantically equivalent to all ports
 }
+
+
+
 
 resource "aws_security_group" "vprofile-prodbean-sg" {
   name        = "vprofile-prodbean-sg"
@@ -101,6 +110,11 @@ resource "aws_vpc_security_group_egress_rule" "allowAllOutbound_ipv6forBeanInst"
   cidr_ipv6         = "::/0"
   ip_protocol       = "-1" # semantically equivalent to all ports
 }
+
+
+
+
+
 
 resource "aws_security_group" "vprofile-backend-sg" {
   name        = "vprofile-backend-sg"
