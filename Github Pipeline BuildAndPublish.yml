@@ -1,78 +1,72 @@
-name: Hprofile Actions
-on: workflow_dispatch
+name: Hprofile Actions                    # Workflow name displayed in GitHub Actions UI
+on: workflow_dispatch                     # Manual trigger - workflow runs only when manually started
 env:
-  AWS_REGION: us-east-2
+  AWS_REGION: us-east-2                  # Global environment variable for all jobs
+
 jobs:
-  Testing:
-    runs-on: ubuntu-latest
+  Testing:                               # First job - handles code quality and testing
+    runs-on: ubuntu-latest               # Uses latest Ubuntu runner environment
     steps:
-      - name: Code checkout
-        uses: actions/checkout@v4
+      - name: Code checkout              # Downloads repository code to runner
+        uses: actions/checkout@v4        # Latest version of checkout action
 
-      - name: Maven test
-        run: mvn test
+      - name: Maven test                 # Runs unit tests using Maven
+        run: mvn test                    # Executes test phase of Maven lifecycle
 
-      - name: Checkstyle
-        run: mvn checkstyle:checkstyle
+      - name: Checkstyle                 # Code style analysis
+        run: mvn checkstyle:checkstyle    # Generates checkstyle report for code standards
 
-      # Setup java 11 to be default (sonar-scanner requirement as of 5.x)
-      - name: Set Java 11
-        uses: actions/setup-java@v3
+      - name: Set Java 11                # Required for SonarQube scanner 5.x+
+        uses: actions/setup-java@v3      # Sets up Java environment
         with:
-         distribution: 'temurin' # See 'Supported distributions' for available options
-         java-version: '11'
+         distribution: 'temurin'         # Eclipse Temurin JDK distribution
+         java-version: '11'              # Java 11 specifically for SonarQube compatibility
 
-    # Setup sonar-scanner
-      - name: Setup SonarQube
-        uses: warchant/setup-sonar-scanner@v7
+      - name: Setup SonarQube            # Installs SonarQube scanner tool
+        uses: warchant/setup-sonar-scanner@v7  # Third-party action for scanner setup
    
-    # Run sonar-scanner
-      - name: SonarQube Scan
-        run: sonar-scanner
-           -Dsonar.host.url=${{ secrets.SONAR_URL }}
-           -Dsonar.login=${{ secrets.SONAR_TOKEN }}
-           -Dsonar.organization=${{ secrets.SONAR_ORGANIZATION }}
-           -Dsonar.projectKey=${{ secrets.SONAR_PROJECT_KEY }}
-           -Dsonar.sources=src/
-           -Dsonar.junit.reportsPath=target/surefire-reports/ 
-           -Dsonar.jacoco.reportsPath=target/jacoco.exec 
-           -Dsonar.java.checkstyle.reportPaths=target/checkstyle-result.xml
-           -Dsonar.java.binaries=target/test-classes/com/visualpathit/account/controllerTest/
+      - name: SonarQube Scan             # Performs static code analysis
+        run: sonar-scanner               # Command-line scanner execution
+           -Dsonar.host.url=${{ secrets.SONAR_URL }}           # SonarQube server URL from secrets
+           -Dsonar.login=${{ secrets.SONAR_TOKEN }}            # Authentication token from secrets
+           -Dsonar.organization=${{ secrets.SONAR_ORGANIZATION }} # SonarCloud organization
+           -Dsonar.projectKey=${{ secrets.SONAR_PROJECT_KEY }} # Unique project identifier
+           -Dsonar.sources=src/                               # Source code directory to analyze
+           -Dsonar.junit.reportsPath=target/surefire-reports/ # Unit test results location
+           -Dsonar.jacoco.reportsPath=target/jacoco.exec      # Code coverage report path
+           -Dsonar.java.checkstyle.reportPaths=target/checkstyle-result.xml # Style violations report
+           -Dsonar.java.binaries=target/test-classes/com/visualpathit/account/controllerTest/ # Compiled test classes
 
-      # Check the Quality Gate status.
-      - name: SonarQube Quality Gate check
-        id: sonarqube-quality-gate-check
-        uses: sonarsource/sonarqube-quality-gate-action@master
-        # Force to fail step after specific time.
-        timeout-minutes: 5
+      - name: SonarQube Quality Gate check  # Validates code quality standards
+        id: sonarqube-quality-gate-check    # Step ID for referencing in other steps
+        uses: sonarsource/sonarqube-quality-gate-action@master # Official SonarSource action
+        timeout-minutes: 5                   # Maximum wait time for quality gate result
         env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ secrets.SONAR_URL }} #OPTIONAL   
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}    # Authentication for quality gate API
+          SONAR_HOST_URL: ${{ secrets.SONAR_URL }}   # SonarQube server endpoint
 
-  BUILD_AND_PUBLISH:
-    needs: Testing
-    runs-on: ubuntu-latest
+  BUILD_AND_PUBLISH:                     # Second job - builds and publishes Docker image
+    needs: Testing                       # Dependency - runs only after Testing job succeeds
+    runs-on: ubuntu-latest               # Fresh Ubuntu environment for build process
     steps:
-      - name: Code checkout
-        uses: actions/checkout@v4
+      - name: Code checkout              # Fresh checkout for build job
+        uses: actions/checkout@v4        # Ensures latest code for building
 
-      - name: Update application.properties file
-        run: |
-          sed -i "s/^jdbc.username.*$/jdbc.username\=${{ secrets.RDS_USER }}/" src/main/resources/application.properties
-          sed -i "s/^jdbc.password.*$/jdbc.password\=${{ secrets.RDS_PASS }}/" src/main/resources/application.properties
-          sed -i "s/db01/${{ secrets.RDS_ENDPOINT }}/" src/main/resources/application.properties
+      - name: Update application.properties file  # Dynamic configuration update
+        run: |                           # Multi-line shell script
+          sed -i "s/^jdbc.username.*$/jdbc.username\=${{ secrets.RDS_USER }}/" src/main/resources/application.properties     # Replace database username
+          sed -i "s/^jdbc.password.*$/jdbc.password\=${{ secrets.RDS_PASS }}/" src/main/resources/application.properties     # Replace database password
+          sed -i "s/db01/${{ secrets.RDS_ENDPOINT }}/" src/main/resources/application.properties                            # Replace database endpoint
 
-      - name: Build & Upload image to ECR
-        uses: appleboy/docker-ecr-action@master
+      - name: Build & Upload image to ECR  # Containerization and registry push
+        uses: appleboy/docker-ecr-action@master  # Third-party action for ECR operations
         with:
-         access_key: ${{ secrets.AWS_ACCESS_KEY_ID }}
-         secret_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-         registry: ${{ secrets.REGISTRY }}
-         repo: actapp
-         region: ${{ env.AWS_REGION }}
-         tags: latest,${{ github.run_number }}
-         daemon_off: false
-         dockerfile: ./Dockerfile
-         context: ./
-
-  
+         access_key: ${{ secrets.AWS_ACCESS_KEY_ID }}      # AWS IAM access key
+         secret_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}  # AWS IAM secret key
+         registry: ${{ secrets.REGISTRY }}                # ECR registry URL
+         repo: actapp                                      # ECR repository name
+         region: ${{ env.AWS_REGION }}                    # AWS region from global env
+         tags: latest,${{ github.run_number }}            # Image tags: latest + build number
+         daemon_off: false                                # Keep Docker daemon running
+         dockerfile: ./Dockerfile                         # Dockerfile location
+         context: ./                                       # Build context directory
