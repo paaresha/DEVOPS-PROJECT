@@ -1,0 +1,61 @@
+name: "Vprofile IAC"                                                    # Workflow name for Terraform infrastructure deployment
+on:
+  push:
+    branches:
+      - main                                                            # Production environment trigger
+      - stage                                                           # Staging environment trigger
+    paths:
+      - terraform/**                                                    # Only trigger when Terraform files change
+  pull_request:
+    branches:
+      - main                                                            # Run validation on PRs to main
+    paths:
+      - terraform/**                                                    # Only for Terraform file changes
+
+env:
+  # Credentials for deployment to AWS
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}                   # AWS access key from GitHub secrets
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}           # AWS secret key from GitHub secrets
+  # S3 bucket for the Terraform state
+  BUCKET_TF_STATE: ${{ secrets.BUCKET_TF_STATE }}                       # S3 bucket name for remote state storage
+  AWS_REGION: us-east-2                                                 # Target AWS region
+  EKS_CLUSTER: vprofile-eks                                             # Target EKS cluster name
+
+jobs:
+  terraform:
+    name: "Apply terraform code changes"                                # Job description
+    runs-on: ubuntu-latest                                              # Use latest Ubuntu runner
+    defaults:
+      run:
+        shell: bash                                                     # Use bash shell for all commands
+        working-directory: ./terraform                                  # Set working directory to terraform folder
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4                                       # Get latest code from repository
+
+      - name: Setup Terraform with specified version on the runner
+        uses: hashicorp/setup-terraform@v2                             # Install Terraform on runner
+        #with:
+        #  terraform_version: 1.6.3                                     # Optional: Pin specific Terraform version
+
+      - name: Terraform init
+        id: init
+        run: terraform init -backend-config="bucket=$BUCKET_TF_STATE"   # Initialize with S3 backend configuration
+
+      - name: Terraform format
+        id: fmt
+        run: terraform fmt -check                                       # Check if code is properly formatted
+
+      - name: Terraform validate
+        id: validate
+        run: terraform validate                                         # Validate Terraform configuration syntax
+
+      - name: Terraform plan
+        id: plan
+        run: terraform plan -no-color -input=false -out planfile       # Generate execution plan, save to file
+        continue-on-error: true                                         # Don't fail workflow if plan fails
+
+      - name: Terraform plan status
+        if: steps.plan.outcome == 'failure'                             # Check if previous plan step failed
+        run: exit 1                                                     # Exit with error code if plan failed

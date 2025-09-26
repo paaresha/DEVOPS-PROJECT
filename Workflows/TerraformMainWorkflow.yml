@@ -1,0 +1,87 @@
+name: "Vprofile IAC"                                                    # GitHub Actions workflow for Terraform infrastructure
+on:
+  push:
+    branches:
+      - main                                                            # Production environment branch
+      - stage                                                           # Staging environment branch
+    paths:
+      - terraform/**                                                    # Only trigger on Terraform file changes
+  pull_request:
+    branches:
+      - main                                                            # Validate PRs targeting main branch
+    paths:
+      - terraform/**                                                    # Only for Terraform directory changes
+
+env:
+  # Credentials for deployment to AWS
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}                   # AWS access key from GitHub secrets
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}           # AWS secret access key from GitHub secrets
+  # S3 bucket for the Terraform state
+  BUCKET_TF_STATE: ${{ secrets.BUCKET_TF_STATE }}                       # S3 bucket for remote state storage
+  AWS_REGION: us-east-2                                                 # Target AWS region for deployment
+  EKS_CLUSTER: vprofile-eks                                             # EKS cluster name for Kubernetes operations
+
+jobs:
+  terraform:
+    name: "Apply terraform code changes"                                # Job name describing infrastructure deployment
+    runs-on: ubuntu-latest                                              # Use latest Ubuntu GitHub runner
+    defaults:
+      run:
+        shell: bash                                                     # Use bash shell for all run commands
+        working-directory: ./terraform                                  # Set working directory to terraform folder
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4                                       # Checkout repository code to runner
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4                  # Setup AWS authentication for Terraform
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}           # Pass AWS access key to action
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}   # Pass AWS secret key to action
+          aws-region: ${{ env.AWS_REGION }}                             # Set AWS region for operations
+
+      - name: Setup Terraform with specified version on the runner
+        uses: hashicorp/setup-terraform@v2                             # Install Terraform CLI on runner
+        #with:
+        #  terraform_version: 1.6.3                                     # Optional: Pin specific Terraform version
+
+      - name: Terraform init
+        id: init
+        run: terraform init -backend-config="bucket=$BUCKET_TF_STATE"   # Initialize Terraform with S3 backend
+
+      - name: Terraform format
+        id: fmt
+        run: terraform fmt -check                                       # Validate Terraform code formatting
+
+      - name: Terraform validate
+        id: validate
+        run: terraform validate                                         # Validate Terraform configuration syntax
+
+      - name: Terraform plan
+        id: plan
+        run: terraform plan -no-color -input=false -out planfile       # Create execution plan and save to file
+        continue-on-error: true                                         # Continue workflow even if plan fails
+
+      - name: Terraform plan status
+        if: steps.plan.outcome == 'failure'                             # Check if plan step failed
+        run: exit 1                                                     # Exit workflow with error if plan failed
+
+      - name: Terraform Apply
+        id: apply
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'  # Only apply on push to main branch
+        run: terraform apply -auto-approve -input=false -parallelism=1 planfile  # Apply changes to production
+
+      - name: Terraform Apply (Stage)
+        id: apply-stage
+        if: github.ref == 'refs/heads/stage' && github.event_name == 'push'  # Only apply on push to stage branch
+        run: terraform apply -auto-approve -input=false -parallelism=1 planfile  # Apply changes to staging
+
+      - name: Get Kube config file
+        id: getconfig
+        if: (steps.apply.outcome == 'success') || (steps.apply-stage.outcome == 'success')  # Run if either apply succeeded
+        run: aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.EKS_CLUSTER }}  # Configure kubectl for EKS
+
+      - name: Install Ingress controller
+        if: steps.getconfig.outcome == 'success'                        # Only run if kubeconfig was successful
+        run: kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.1.3/deploy/static/provider/aws/deploy.yaml  # Deploy NGINX ingress controller
