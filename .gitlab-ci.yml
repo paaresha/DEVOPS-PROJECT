@@ -1,85 +1,71 @@
 stages:
-  - lint
-  - package
-  - deploy
-  - drift-check
+  - lint          # Validate Helm chart syntax and structure
+  - package       # Create deployable .tgz package
+  - deploy        # Deploy to EKS cluster
+  - drift-check   # Monitor configuration drift
 
 variables:
-  HELM_CHART_PATH: "./vprofile-charts"
-  CHART_NAME: "vprofile-charts"
-  EKS_CLUSTER_NAME: "vprofile-eks-cluster"
-  AWS_DEFAULT_REGION: "us-east-1"
+  HELM_CHART_PATH: "./vprofile-chart"     # Path to Helm chart directory
+  CHART_NAME: "vprofile-chart"            # Chart name for artifact naming
+  EKS_CLUSTER_NAME: "vprofile-eks-cluster" # Target EKS cluster
+  AWS_DEFAULT_REGION: "us-east-1"         # AWS region for resources
+
+.ec2-runner:                              # Shared template for runner config
+  tags:
+    - ec2                                 # Use EC2-based GitLab runner
 
 helm-lint:
+  extends: .ec2-runner                    # Inherit EC2 runner configuration
   stage: lint
-  image: alpine:latest
-  tags:
-    - ec2_2
-  before_script:
-    - apk add --no-cache curl bash openssl
-    - curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+  image: alpine:3.18                     # Lightweight Alpine Linux image
   script:
-    - helm lint $HELM_CHART_PATH
-  only:
-    - merge_requests
-    - main
+    - apk add --no-cache curl openssl     # Install required packages
+    - curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | sh # Install Helm 3
+    - helm lint $HELM_CHART_PATH          # Validate chart syntax and best practices
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" # Run on merge requests
+    - if: $CI_COMMIT_BRANCH == "main"     # Run on main branch commits
 
 helm-package:
+  extends: .ec2-runner
   stage: package
-  image: alpine:latest
-  tags:
-    - ec2_2
-  before_script:
-    - apk add --no-cache curl bash openssl
-    - curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+  image: alpine:3.18
   script:
-    - helm package $HELM_CHART_PATH
-    - mkdir -p charts
-    - mv *.tgz charts/
+    - apk add --no-cache curl openssl
+    - curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | sh
+    - helm package $HELM_CHART_PATH       # Create .tgz package from chart
   artifacts:
     paths:
-      - charts/
-    expire_in: 1 week
-  only:
-    - main
+      - $CHART_NAME-*.tgz                 # Store packaged chart as artifact
+    expire_in: 1 week                     # Keep artifacts for 1 week
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"     # Only package on main branch
 
 deploy:
+  extends: .ec2-runner
   stage: deploy
-  image: alpine/k8s:1.28.4
-  tags:
-    - ec2_2
-  before_script:
-    - apk add --no-cache aws-cli
-    - aws eks update-kubeconfig --region $AWS_DEFAULT_REGION --name $EKS_CLUSTER_NAME
+  image: alpine/k8s:1.28.4               # Alpine with kubectl pre-installed
   script:
-    - |
-      helm upgrade --install vprofile $HELM_CHART_PATH --namespace vprofile --create-namespace \
-        --set dockerRegistry.server="$DOCKER_REGISTRY_SERVER" \
-        --set dockerRegistry.username="$DOCKER_REGISTRY_USERNAME" \
-        --set dockerRegistry.password="$DOCKER_REGISTRY_PASSWORD"
-  only:
-    - main
-    - schedules
+    - apk add --no-cache aws-cli curl openssl # Install AWS CLI and utilities
+    - curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | sh # Install Helm 3
+    - aws eks update-kubeconfig --name $EKS_CLUSTER_NAME --region $AWS_DEFAULT_REGION # Configure kubectl for EKS
+    - kubectl create namespace vprofile --dry-run=client -o yaml | kubectl apply -f - # Ensure namespace exists
+    - helm upgrade --install vprofile $HELM_CHART_PATH --namespace vprofile --set dockerRegistry.server=$DOCKER_REGISTRY_SERVER --set dockerRegistry.username=$DOCKER_REGISTRY_USERNAME --set dockerRegistry.password=$DOCKER_REGISTRY_PASSWORD # Deploy/upgrade release with registry credentials
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"     # Deploy on main branch
+    - if: $CI_PIPELINE_SOURCE == "schedule" # Deploy on scheduled runs
 
 drift-detection:
+  extends: .ec2-runner
   stage: drift-check
   image: alpine/k8s:1.28.4
-  tags:
-    - ec2_2
-  before_script:
-    - apk add --no-cache aws-cli
-    - aws eks update-kubeconfig --region $AWS_DEFAULT_REGION --name $EKS_CLUSTER_NAME
   script:
-    - |
-      helm diff upgrade vprofile $HELM_CHART_PATH --namespace vprofile \
-        --set dockerRegistry.server="$DOCKER_REGISTRY_SERVER" \
-        --set dockerRegistry.username="$DOCKER_REGISTRY_USERNAME" \
-        --set dockerRegistry.password="$DOCKER_REGISTRY_PASSWORD" || echo "Drift detected"
-    - |
-      helm upgrade --install vprofile $HELM_CHART_PATH --namespace vprofile --create-namespace --dry-run \
-        --set dockerRegistry.server="$DOCKER_REGISTRY_SERVER" \
-        --set dockerRegistry.username="$DOCKER_REGISTRY_USERNAME" \
-        --set dockerRegistry.password="$DOCKER_REGISTRY_PASSWORD"
-  only:
-    - schedules
-  allow_failure: true
+    - apk add --no-cache aws-cli curl openssl
+    - curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | sh
+    - aws eks update-kubeconfig --name $EKS_CLUSTER_NAME --region $AWS_DEFAULT_REGION
+    - curl https://raw.githubusercontent.com/databus23/helm-diff/master/install-binary.sh | bash # Install helm-diff plugin
+    - helm diff upgrade vprofile $HELM_CHART_PATH --namespace vprofile --set dockerRegistry.server=$DOCKER_REGISTRY_SERVER --set dockerRegistry.username=$DOCKER_REGISTRY_USERNAME --set dockerRegistry.password=$DOCKER_REGISTRY_PASSWORD # Compare current vs desired state
+    - helm upgrade --install vprofile $HELM_CHART_PATH --namespace vprofile --dry-run --set dockerRegistry.server=$DOCKER_REGISTRY_SERVER --set dockerRegistry.username=$DOCKER_REGISTRY_USERNAME --set dockerRegistry.password=$DOCKER_REGISTRY_PASSWORD # Simulate deployment without applying
+  allow_failure: true                     # Don't fail pipeline on drift detection
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule" # Only run on scheduled pipelines
