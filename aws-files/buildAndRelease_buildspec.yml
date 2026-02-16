@@ -42,3 +42,7 @@ phases:  # Build phases definition
       - mvn clean install -DskipTests
 
 artifacts:  # Define what files to output
+  files:
+     - target/**/*.war
+  discard-paths: yes
+  name: ROOT.war
